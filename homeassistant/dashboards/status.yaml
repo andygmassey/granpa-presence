@@ -4,6 +4,7 @@ views:
     path: overview
     icon: mdi:home-heart
     cards:
+      # ── Status Header ──
       - type: markdown
         content: |
           # Dad Status
@@ -11,6 +12,25 @@ views:
           {% set last_activity = states('input_datetime.dad_last_activity') %}
           ### Last Activity: {{ last_activity | as_timestamp | timestamp_custom('%A at %I:%M %p') if last_activity not in ['unknown', 'unavailable', ''] else 'Unknown' }}
 
+      # ── Cloud Offline Warning (only shows when offline) ──
+      - type: conditional
+        conditions:
+          - entity: input_boolean.xiaomi_cloud_available
+            state: "off"
+        card:
+          type: markdown
+          content: |
+            ## ⚠️ Xiaomi Cloud Offline
+            Presence sensors not updating. **Activity alerts are paused.**
+
+            | Sensor | Last Update | Current State |
+            |--------|-------------|---------------|
+            | 🛏️ Bedroom | {{ states('sensor.bedroom_sensor_age') }} | {{ states('sensor.xiaomi_03_85df_occupancy_sensor') }} |
+            | 🚿 Shower Room | {{ states('sensor.shower_room_sensor_age') }} | {{ states('sensor.xiaomi_03_b987_occupancy_sensor') }} |
+
+            Camera motion detection is still working.
+
+      # ── Room Status ──
       - type: markdown
         title: Room Status
         content: |
@@ -37,6 +57,7 @@ views:
           ⚠️ **Warning:** One or more Xiaomi sensors have stale data. The status shown may not be current.
           {% endif %}
 
+      # ── Sleep Pattern ──
       - type: horizontal-stack
         cards:
           - type: entity
@@ -52,6 +73,7 @@ views:
             name: Avg Wake
             icon: mdi:chart-line
 
+      # ── Camera Feeds ──
       - type: horizontal-stack
         cards:
           - type: picture-glance
@@ -65,29 +87,50 @@ views:
             camera_view: live
             entities: []
 
-      - type: entities
-        title: Sensor Batteries
-        show_header_toggle: false
-        entities:
-          - entity: sensor.xiaomi_03_85df_battery_level
-            name: Bedroom Sensor
-            icon: mdi:battery
-          - entity: sensor.xiaomi_03_b987_battery_level
-            name: Shower Room Sensor
-            icon: mdi:battery
+      # ── Grafana Charts ──
+      # NOTE: Lovelace YAML does NOT support !secret - URLs must be inline
+      # Replace YOUR_IP with your Grafana host (e.g. Tailscale IP or localhost)
+      - type: iframe
+        title: Today vs Normal Pattern
+        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=1&kiosk&theme=dark
+        aspect_ratio: 50%
 
-      - type: entities
-        title: Monitoring Settings
-        show_header_toggle: false
-        entities:
-          - entity: input_boolean.dad_monitoring_enabled
-            name: Monitoring Enabled
-            icon: mdi:shield-home
-          - entity: input_number.daytime_alert_hours
-            name: Daytime Alert Threshold
-          - entity: input_number.nighttime_alert_hours
-            name: Nighttime Alert Threshold
+      - type: iframe
+        title: Activity by Room (7 Days)
+        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=2&kiosk&theme=dark
+        aspect_ratio: 50%
 
+      - type: iframe
+        title: Wake and Sleep Times
+        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=3&kiosk&theme=dark
+        aspect_ratio: 50%
+
+      # ── Batteries & Monitoring ──
+      - type: horizontal-stack
+        cards:
+          - type: entities
+            title: Sensor Batteries
+            show_header_toggle: false
+            entities:
+              - entity: sensor.xiaomi_03_85df_battery_level
+                name: Bedroom Sensor
+                icon: mdi:battery
+              - entity: sensor.xiaomi_03_b987_battery_level
+                name: Shower Room Sensor
+                icon: mdi:battery
+          - type: entities
+            title: Monitoring Settings
+            show_header_toggle: false
+            entities:
+              - entity: input_boolean.dad_monitoring_enabled
+                name: Monitoring Enabled
+                icon: mdi:shield-home
+              - entity: input_number.daytime_alert_hours
+                name: Daytime Alert Threshold
+              - entity: input_number.nighttime_alert_hours
+                name: Nighttime Alert Threshold
+
+      # ── System Health ──
       - type: entities
         title: System Health
         show_header_toggle: false
@@ -107,37 +150,3 @@ views:
           - entity: sensor.deepgram_balance
             name: Deepgram Credit
             icon: mdi:credit-card
-
-      - type: conditional
-        conditions:
-          - entity: input_boolean.xiaomi_cloud_available
-            state: "off"
-        card:
-          type: markdown
-          content: |
-            ## ⚠️ Xiaomi Cloud Offline
-            Presence sensors not updating. **Activity alerts are paused.**
-
-            | Sensor | Last Update | Current State |
-            |--------|-------------|---------------|
-            | 🛏️ Bedroom | {{ states('sensor.bedroom_sensor_age') }} | {{ states('sensor.xiaomi_03_85df_occupancy_sensor') }} |
-            | 🚿 Shower Room | {{ states('sensor.shower_room_sensor_age') }} | {{ states('sensor.xiaomi_03_b987_occupancy_sensor') }} |
-
-            Camera motion detection is still working.
-
-      # Grafana embedded panels - Lovelace YAML does NOT support !secret
-      # Replace the URLs below with your Grafana instance address
-      - type: iframe
-        title: Today vs Normal Pattern
-        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=1&kiosk&theme=dark
-        aspect_ratio: 50%
-
-      - type: iframe
-        title: Activity by Room (7 Days)
-        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=2&kiosk&theme=dark
-        aspect_ratio: 50%
-
-      - type: iframe
-        title: Wake and Sleep Times
-        url: http://YOUR_IP:3000/d-solo/dad-presence/dad-activity-patterns?orgId=1&panelId=3&kiosk&theme=dark
-        aspect_ratio: 50%
