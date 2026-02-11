@@ -1,4 +1,4 @@
-# Granpa Presence - Elderly Monitoring System
+# Grandpa Presence - Elderly Monitoring System
 
 A Home Assistant-based system for remotely monitoring an elderly relative's daily activity, with automated alerts, sleep pattern tracking, and self-healing infrastructure. Built on a Raspberry Pi with Xiaomi presence sensors and Reolink cameras.
 
@@ -131,8 +131,8 @@ Plus: Docker container watchdog, auto-restart on boot, hardware watchdog, SD car
 
 1. **Clone this repo** to your Pi:
    ```bash
-   git clone https://github.com/andygmassey/granpa-presence.git
-   cd granpa-presence
+   git clone https://github.com/andygmassey/grandpa-presence.git
+   cd grandpa-presence
    ```
 
 2. **Create your secrets files:**
@@ -157,7 +157,7 @@ Plus: Docker container watchdog, auto-restart on boot, hardware watchdog, SD car
 ### File Structure
 
 ```
-granpa-presence/
+grandpa-presence/
 ├── docker-compose.yml              # HA + InfluxDB + Grafana stack
 ├── .env.example                    # Docker credentials template
 ├── homeassistant/

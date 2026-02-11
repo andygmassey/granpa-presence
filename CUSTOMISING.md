@@ -1,4 +1,4 @@
-# Customising Granpa Presence
+# Customising Grandpa Presence
 
 This guide explains how to adapt the system for your own family member's home and schedule.
 
