@@ -1,0 +1,23 @@
+# Secrets
+SECRETS.md
+*.secret
+homeassistant/secrets.yaml
+secrets.yaml
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Backup files
+*.bak
+*.backup

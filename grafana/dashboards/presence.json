@@ -1,0 +1,334 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Today vs Historical Average",
+      "description": "Hourly activity pattern: Today (solid) vs Average (dashed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "Activity Level",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Historical Average" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Today" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "import \"date\"\n\n// Today's activity - count of presence events per hour\nfrom(bucket: \"homeassistant\")\n  |> range(start: today())\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\")\n  |> aggregateWindow(every: 1h, fn: count, createEmpty: true)\n  |> fill(value: 0)\n  |> set(key: \"_field\", value: \"Today\")"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "import \"date\"\n\n// Historical average by hour of day (last 30 days excluding today)\nfrom(bucket: \"homeassistant\")\n  |> range(start: -30d, stop: today())\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\")\n  |> aggregateWindow(every: 1h, fn: count, createEmpty: true)\n  |> fill(value: 0)\n  |> map(fn: (r) => ({ r with hour: date.hour(t: r._time) }))\n  |> group(columns: [\"hour\"])\n  |> mean()\n  |> group()\n  |> map(fn: (r) => ({ r with _time: date.add(d: duration(v: string(v: r.hour) + \"h\"), to: today()), _field: \"Historical Average\" }))"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "7-Day Activity Trend",
+      "description": "Daily activity count over the past week",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "lineWidth": 1
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\")\n  |> aggregateWindow(every: 1d, fn: count, createEmpty: true)\n  |> fill(value: 0)"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "id": 3,
+      "title": "First Activity Time (Today)",
+      "description": "When was activity first detected this morning",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 32400 },
+              { "color": "red", "value": 36000 }
+            ]
+          },
+          "unit": "dateTimeFromNow"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: today())\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\" and r._value != \"0\" and r._value != \"off\" and r._value != \"no_one\")\n  |> first()\n  |> map(fn: (r) => ({ r with _value: int(v: r._time) / 1000000 }))"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["first"], "fields": "", "values": false },
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Last Activity",
+      "description": "Most recent detected activity",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 900000 },
+              { "color": "red", "value": 1800000 }
+            ]
+          },
+          "unit": "dateTimeFromNow"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\" and r._value != \"0\" and r._value != \"off\" and r._value != \"no_one\")\n  |> last()\n  |> map(fn: (r) => ({ r with _value: int(v: r._time) / 1000000 }))"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Bedroom Activity",
+      "description": "Bedroom presence sensor events",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r.entity_id == \"sensor.xiaomi_03_85df_occupancy_sensor\")\n  |> filter(fn: (r) => r._field == \"value\" or r._field == \"state\")"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "hidden" }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Living Room Motion",
+      "description": "Living room camera motion events",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r.entity_id == \"binary_sensor.gramps_living_room_motion\")\n  |> filter(fn: (r) => r._field == \"value\" or r._field == \"state\")"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "hidden" }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Conservatory Motion",
+      "description": "Conservatory camera motion events",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 19 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "yellow", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r.entity_id == \"binary_sensor.gramps_conservatory_motion\")\n  |> filter(fn: (r) => r._field == \"value\" or r._field == \"state\")"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "hidden" }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Activity Heatmap (Last 7 Days)",
+      "description": "Hour-by-day activity pattern",
+      "type": "heatmap",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "influxdb", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${datasource}" },
+          "query": "from(bucket: \"homeassistant\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"state\" or r._measurement == \"binary_sensor\" or r._measurement == \"sensor\")\n  |> filter(fn: (r) => r.entity_id =~ /xiaomi_03_85df_occupancy_sensor|gramps_living_room_motion|gramps_conservatory_motion/)\n  |> filter(fn: (r) => r._value != \"unavailable\" and r._value != \"unknown\")\n  |> aggregateWindow(every: 1h, fn: count, createEmpty: true)\n  |> fill(value: 0)"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Oranges",
+          "steps": 64
+        },
+        "exemplars": { "color": "rgba(255,0,255,0.7)" },
+        "filterValues": { "le": 1e-9 },
+        "legend": { "show": true },
+        "rowsFrame": { "layout": "auto" },
+        "tooltip": { "show": true, "yHistogram": false },
+        "yAxis": { "axisPlacement": "left", "reverse": false }
+      }
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["presence", "dad"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "InfluxDB", "value": "InfluxDB" },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "influxdb",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Dad Presence Patterns",
+  "uid": "dad-presence",
+  "version": 1,
+  "weekStart": ""
+}

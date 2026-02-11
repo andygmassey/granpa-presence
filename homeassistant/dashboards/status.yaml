@@ -1,0 +1,141 @@
+title: Dad Status
+views:
+  - title: Overview
+    path: overview
+    icon: mdi:home-heart
+    cards:
+      - type: markdown
+        content: |
+          # Dad Status
+          ---
+          {% set last_activity = states('input_datetime.dad_last_activity') %}
+          ### Last Activity: {{ last_activity | as_timestamp | timestamp_custom('%A at %I:%M %p') if last_activity not in ['unknown', 'unavailable', ''] else 'Unknown' }}
+
+      - type: markdown
+        title: Room Status
+        content: |
+          {% set bedroom_state = states('sensor.xiaomi_03_85df_occupancy_sensor') %}
+          {% set shower_state = states('sensor.xiaomi_03_b987_occupancy_sensor') %}
+          {% set bedroom_age = states('sensor.bedroom_sensor_age') %}
+          {% set shower_age = states('sensor.shower_room_sensor_age') %}
+          {% set bedroom_stale_val = states('sensor.bedroom_sensor_stale') %}
+          {% set shower_stale_val = states('sensor.shower_room_sensor_stale') %}
+          {% set bedroom_stale = bedroom_stale_val in ['True', 'true', 'unknown', 'unavailable'] %}
+          {% set shower_stale = shower_stale_val in ['True', 'true', 'unknown', 'unavailable'] %}
+          {% set living_motion = states('binary_sensor.gramps_living_room_motion') %}
+          {% set conservatory_motion = states('binary_sensor.gramps_conservatory_motion') %}
+
+          | Room | Status | Last Update |
+          |------|--------|-------------|
+          | 🛏️ Bedroom | {{ 'Presence' if 'has' in bedroom_state|lower else ('?' if bedroom_state in ['unknown','unavailable'] else 'Empty') }}{% if bedroom_stale %} ⚠️{% endif %} | {{ bedroom_age if bedroom_age not in ['unknown','unavailable'] else 'No data' }}{% if bedroom_stale and bedroom_age not in ['unknown','unavailable'] %} **STALE**{% endif %} |
+          | 🚿 Shower Room | {{ 'Presence' if 'has' in shower_state|lower else ('?' if shower_state in ['unknown','unavailable'] else 'Empty') }}{% if shower_stale %} ⚠️{% endif %} | {{ shower_age if shower_age not in ['unknown','unavailable'] else 'No data' }}{% if shower_stale and shower_age not in ['unknown','unavailable'] %} **STALE**{% endif %} |
+          | 📺 Living Room | {{ 'Motion' if living_motion == 'on' else ('?' if living_motion in ['unknown','unavailable'] else 'Empty') }} | Camera |
+          | 🌿 Conservatory | {{ 'Motion' if conservatory_motion == 'on' else ('?' if conservatory_motion in ['unknown','unavailable'] else 'Empty') }} | Camera |
+
+          {% if bedroom_stale or shower_stale %}
+          ---
+          ⚠️ **Warning:** One or more Xiaomi sensors have stale data. The status shown may not be current.
+          {% endif %}
+
+      - type: horizontal-stack
+        cards:
+          - type: entity
+            entity: input_datetime.dad_bed_time
+            name: Bed Time
+            icon: mdi:bed-clock
+          - type: entity
+            entity: input_datetime.dad_wake_time
+            name: Wake Time
+            icon: mdi:weather-sunset-up
+          - type: entity
+            entity: input_datetime.dad_avg_wake_time
+            name: Avg Wake
+            icon: mdi:chart-line
+
+      - type: horizontal-stack
+        cards:
+          - type: picture-glance
+            title: Living Room
+            camera_image: camera.gramps_living_room_fluent
+            camera_view: live
+            entities: []
+          - type: picture-glance
+            title: Conservatory
+            camera_image: camera.gramps_conservatory_fluent
+            camera_view: live
+            entities: []
+
+      - type: entities
+        title: Sensor Batteries
+        show_header_toggle: false
+        entities:
+          - entity: sensor.xiaomi_03_85df_battery_level
+            name: Bedroom Sensor
+            icon: mdi:battery
+          - entity: sensor.xiaomi_03_b987_battery_level
+            name: Shower Room Sensor
+            icon: mdi:battery
+
+      - type: entities
+        title: Monitoring Settings
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.dad_monitoring_enabled
+            name: Monitoring Enabled
+            icon: mdi:shield-home
+          - entity: input_number.daytime_alert_hours
+            name: Daytime Alert Threshold
+          - entity: input_number.nighttime_alert_hours
+            name: Nighttime Alert Threshold
+
+      - type: entities
+        title: System Health
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.xiaomi_cloud_available
+            name: Xiaomi Cloud
+            icon: mdi:cloud-check
+          - entity: sensor.cpu_temperature
+            name: CPU Temperature
+            icon: mdi:thermometer
+          - entity: sensor.disk_usage_percent
+            name: Disk Usage
+            icon: mdi:harddisk
+          - entity: sensor.system_uptime
+            name: Uptime
+            icon: mdi:clock-outline
+          - entity: sensor.deepgram_balance
+            name: Deepgram Credit
+            icon: mdi:credit-card
+
+      - type: conditional
+        conditions:
+          - entity: input_boolean.xiaomi_cloud_available
+            state: "off"
+        card:
+          type: markdown
+          content: |
+            ## ⚠️ Xiaomi Cloud Offline
+            Presence sensors not updating. **Activity alerts are paused.**
+
+            | Sensor | Last Update | Current State |
+            |--------|-------------|---------------|
+            | 🛏️ Bedroom | {{ states('sensor.bedroom_sensor_age') }} | {{ states('sensor.xiaomi_03_85df_occupancy_sensor') }} |
+            | 🚿 Shower Room | {{ states('sensor.shower_room_sensor_age') }} | {{ states('sensor.xiaomi_03_b987_occupancy_sensor') }} |
+
+            Camera motion detection is still working.
+
+      - type: iframe
+        title: Today vs Normal Pattern
+        url: !secret grafana_activity_pattern_url
+        aspect_ratio: 50%
+
+      - type: iframe
+        title: Activity by Room (7 Days)
+        url: !secret grafana_activity_by_room_url
+        aspect_ratio: 50%
+
+      - type: iframe
+        title: Wake and Sleep Times
+        url: !secret grafana_wake_sleep_url
+        aspect_ratio: 50%

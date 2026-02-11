@@ -1,0 +1,1042 @@
+# =====================================================
+# DAD PRESENCE MONITORING SYSTEM
+# =====================================================
+
+# -----------------------------------------------------
+# TRACK LAST ACTIVITY
+# -----------------------------------------------------
+- id: 'dad_track_last_activity'
+  alias: 'Dad - Track Last Activity'
+  description: 'Records timestamp whenever presence/motion is detected'
+  mode: restart
+  trigger:
+    - platform: state
+      entity_id: sensor.xiaomi_03_85df_occupancy_sensor
+    - platform: state
+      entity_id: sensor.xiaomi_03_b987_occupancy_sensor
+    - platform: state
+      entity_id: binary_sensor.gramps_living_room_motion
+      to: 'on'
+    - platform: state
+      entity_id: binary_sensor.gramps_conservatory_motion
+      to: 'on'
+  condition:
+    - condition: template
+      value_template: "{{ trigger.to_state.state not in ['unavailable', 'unknown', ''] }}"
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.dad_last_activity
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+# -----------------------------------------------------
+# INITIALIZE SENSOR TIMESTAMPS ON STARTUP
+# Sets initial values when HA starts so dashboard shows reasonable data
+# -----------------------------------------------------
+- id: 'dad_init_sensor_timestamps'
+  alias: 'Dad - Initialize Sensor Timestamps'
+  mode: single
+  trigger:
+    - platform: homeassistant
+      event: start
+  action:
+    - delay: '00:00:30'  # Wait for sensors to be available
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.bedroom_sensor_last_update
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.shower_room_sensor_last_update
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+# -----------------------------------------------------
+# TRACK SENSOR UPDATE TIMES
+# Uses illumination sensors which change frequently (light levels vary)
+# This is a reliable indicator that the Xiaomi cloud connection is working
+# -----------------------------------------------------
+- id: 'dad_track_bedroom_sensor_update'
+  alias: 'Dad - Track Bedroom Sensor Update'
+  mode: restart
+  trigger:
+    # Trigger on illumination changes (happens frequently as light changes)
+    - platform: state
+      entity_id: sensor.xiaomi_03_85df_illumination
+    # Also trigger on occupancy changes
+    - platform: state
+      entity_id: sensor.xiaomi_03_85df_occupancy_sensor
+  condition:
+    - condition: template
+      value_template: "{{ trigger.to_state.state not in ['unavailable', 'unknown', ''] }}"
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.bedroom_sensor_last_update
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+- id: 'dad_track_shower_room_sensor_update'
+  alias: 'Dad - Track Shower Room Sensor Update'
+  mode: restart
+  trigger:
+    # Trigger on illumination changes (happens frequently as light changes)
+    - platform: state
+      entity_id: sensor.xiaomi_03_b987_illumination
+    # Also trigger on occupancy changes
+    - platform: state
+      entity_id: sensor.xiaomi_03_b987_occupancy_sensor
+  condition:
+    - condition: template
+      value_template: "{{ trigger.to_state.state not in ['unavailable', 'unknown', ''] }}"
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.shower_room_sensor_last_update
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+# -----------------------------------------------------
+# DAYTIME ALERT - No activity (configurable via input_number.daytime_alert_hours)
+# -----------------------------------------------------
+- id: 'dad_daytime_no_activity'
+  alias: 'Dad - Daytime No Activity Alert'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: "{{ (as_timestamp(now()) - as_timestamp(states('input_datetime.dad_last_activity'))) > (states('input_number.daytime_alert_hours') | float * 3600) }}"
+      for:
+        minutes: 1
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+    # Don't alert if Xiaomi cloud is offline (we don't know the real status)
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'on'
+    - condition: time
+      after: '07:00:00'
+      before: '23:00:00'
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad Alert - No Activity for {{ states('input_number.daytime_alert_hours') | float | round(1) }} Hours"
+        message: "No activity detected for over {{ states('input_number.daytime_alert_hours') | float | round(1) }} hours"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">⚠️ No Activity Detected</h2>
+            <p>No presence or motion has been detected at Dad's house for <strong>over {{ states('input_number.daytime_alert_hours') | float | round(1) }} hours</strong>.</p>
+            <table style="border-collapse: collapse; margin: 20px 0;">
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Last Activity</strong></td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ as_timestamp(states('input_datetime.dad_last_activity')) | timestamp_custom('%A %d %B at %I:%M %p') }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🛏️ Bedroom</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Presence' if 'has' in states('sensor.xiaomi_03_85df_occupancy_sensor')|lower else 'Empty' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🚿 Shower Room</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Presence' if 'has' in states('sensor.xiaomi_03_b987_occupancy_sensor')|lower else 'Empty' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">📺 Living Room</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Motion' if states('binary_sensor.gramps_living_room_motion') == 'on' else 'Clear' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🌿 Conservatory</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Motion' if states('binary_sensor.gramps_conservatory_motion') == 'on' else 'Clear' }}</td></tr>
+            </table>
+            <p style="color: #d9534f; font-weight: bold;">Please check on him.</p>
+    - delay:
+        hours: 1
+
+# -----------------------------------------------------
+# NIGHTTIME ALERT - No activity (configurable via input_number.nighttime_alert_hours)
+# -----------------------------------------------------
+- id: 'dad_nighttime_no_activity'
+  alias: 'Dad - Nighttime No Activity Alert'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: "{{ (as_timestamp(now()) - as_timestamp(states('input_datetime.dad_last_activity'))) > (states('input_number.nighttime_alert_hours') | float * 3600) }}"
+      for:
+        minutes: 1
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+    # Don't alert if Xiaomi cloud is offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'on'
+    - condition: time
+      after: '23:00:00'
+      before: '07:00:00'
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad Alert - No Nighttime Activity"
+        message: "No activity for over {{ states('input_number.nighttime_alert_hours') | int }} hours during night"
+        data:
+          html: >
+            <h2 style="color: #f0ad4e;">⚠️ No Nighttime Activity</h2>
+            <p>No presence or motion detected for <strong>over {{ states('input_number.nighttime_alert_hours') | int }} hours</strong> during the night.</p>
+            <p><strong>Last Activity:</strong> {{ as_timestamp(states('input_datetime.dad_last_activity')) | timestamp_custom('%A %d %B at %I:%M %p') }}</p>
+            <p><em>This could be normal (sleeping), but please check if you're concerned.</em></p>
+
+# -----------------------------------------------------
+# MORNING CHECK - Alert if no activity by 8am
+# Dad typically wakes 6-7am, so 8am is late
+# -----------------------------------------------------
+- id: 'dad_morning_check'
+  alias: 'Dad - Morning Activity Check'
+  mode: single
+  trigger:
+    - platform: time
+      at: '08:00:00'
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+    # Don't alert if Xiaomi cloud is offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'on'
+    - condition: template
+      value_template: "{{ as_timestamp(states('input_datetime.dad_last_activity')) < as_timestamp(today_at('00:00')) }}"
+  action:
+    - service: notify.email_family
+      data:
+        title: "URGENT - Dad No Morning Activity"
+        message: "Dad has not been detected this morning"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">🚨 URGENT - No Morning Activity</h2>
+            <p style="font-size: 18px;">Dad has <strong>NOT been detected by any sensor this morning</strong>.</p>
+            <p><strong>Last Activity:</strong> {{ as_timestamp(states('input_datetime.dad_last_activity')) | timestamp_custom('%A %d %B at %I:%M %p') }}</p>
+            <p style="color: #d9534f; font-size: 18px; font-weight: bold;">Please check on him immediately.</p>
+
+# -----------------------------------------------------
+# DAILY SUMMARY - Morning report at 7am
+# Dad wakes early so send summary at 7am
+# -----------------------------------------------------
+- id: 'dad_daily_summary'
+  alias: 'Dad - Daily Activity Summary'
+  mode: single
+  trigger:
+    - platform: time
+      at: '08:00:00'
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+  action:
+    - service: notify.email_family
+      data:
+        title: "👴🏻 Dad Daily Summary - {{ now().strftime('%A %d %B') }}"
+        message: "Daily activity report"
+        data:
+          html: >
+            {% set bed_time = states('input_datetime.dad_bed_time') %}
+            {% set wake_time = states('input_datetime.dad_wake_time') %}
+            {% set avg_wake = states('input_datetime.dad_avg_wake_time') %}
+            <h2 style="color: #5cb85c;">📊 Dad's Daily Summary</h2>
+            <p><strong>{{ now().strftime('%A %d %B %Y') }}</strong></p>
+
+            <h3>🛏️ Sleep Pattern</h3>
+            <table style="border-collapse: collapse; margin: 10px 0;">
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Bed Time</strong></td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ bed_time if bed_time != 'unknown' else 'Not detected' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Wake Time</strong></td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ wake_time if wake_time != 'unknown' else 'Not detected' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Avg Wake Time</strong></td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ avg_wake if avg_wake != 'unknown' else 'Calculating...' }}</td></tr>
+            </table>
+
+            <h3>📍 Current Status</h3>
+            <table style="border-collapse: collapse; margin: 10px 0;">
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🛏️ Bedroom</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Presence' if 'has' in states('sensor.xiaomi_03_85df_occupancy_sensor')|lower else 'Empty' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🚿 Shower Room</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Presence' if 'has' in states('sensor.xiaomi_03_b987_occupancy_sensor')|lower else 'Empty' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">📺 Living Room</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Motion' if states('binary_sensor.gramps_living_room_motion') == 'on' else 'Clear' }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🌿 Conservatory</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">{{ 'Motion' if states('binary_sensor.gramps_conservatory_motion') == 'on' else 'Clear' }}</td></tr>
+            </table>
+
+            <h3>🚿 Bathroom Visits (Yesterday)</h3>
+            <p>{{ states("counter.dad_bathroom_visits") }} visits</p>
+
+            <h3>🔋 Sensor Batteries</h3>
+            <p>Bedroom: {{ states('sensor.xiaomi_03_85df_battery_level') }}%<br>
+            Shower Room: {{ states('sensor.xiaomi_03_b987_battery_level') }}%</p>
+
+            <h3>🖥️ System Status</h3>
+            <p>CPU Temp: {{ states('sensor.cpu_temperature') }}°C<br>
+            Disk Usage: {{ states('sensor.disk_usage_percent') }}%<br>
+            <strong>💳 Deepgram Balance: ${{ states('sensor.deepgram_balance') }}</strong></p>
+
+            <hr>
+            <p style="color: #5cb85c;">✅ System online and monitoring.</p>
+
+# -----------------------------------------------------
+# LOW BATTERY ALERT
+# -----------------------------------------------------
+- id: 'dad_low_battery'
+  alias: 'Dad - Low Battery Alert'
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.xiaomi_03_85df_battery_level
+      below: 25
+    - platform: numeric_state
+      entity_id: sensor.xiaomi_03_b987_battery_level
+      below: 25
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad - Sensor Battery Low"
+        message: "A presence sensor has low battery"
+        data:
+          html: >
+            <h2 style="color: #f0ad4e;">🔋 Sensor Battery Low</h2>
+            <p>A presence sensor at Dad's house has <strong>low battery</strong>:</p>
+            <p>Bedroom: {{ states('sensor.xiaomi_03_85df_battery_level') }}%<br>
+            Shower Room: {{ states('sensor.xiaomi_03_b987_battery_level') }}%</p>
+            <p>Please arrange to replace the battery soon.</p>
+
+# -----------------------------------------------------
+# SYSTEM STARTUP NOTIFICATION (disabled - too noisy)
+# -----------------------------------------------------
+# - id: 'dad_system_startup'
+#   alias: 'Dad - System Startup Notification'
+#   trigger:
+#     - platform: homeassistant
+#       event: start
+#   action:
+#     - delay:
+#         seconds: 60
+#     - service: notify.email_family
+#       data:
+#         title: "🏠 Dad Monitoring System Started"
+#         message: "Home Assistant has started"
+
+# -----------------------------------------------------
+# SYSTEM HEALTH ALERTS
+# -----------------------------------------------------
+
+# Disk space alert
+- id: 'dad_system_disk_full'
+  alias: 'Dad System - Disk Space Alert'
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.disk_usage_percent
+      above: 80
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad System Alert - Disk Space Low"
+        message: "Disk usage is above 80%"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">💾 Disk Space Low</h2>
+            <p>The Pi's disk usage is at <strong>{{ states('sensor.disk_usage_percent') }}%</strong>.</p>
+            <p>Please SSH in and clear old files or expand storage.</p>
+
+# CPU temperature alert
+- id: 'dad_system_overheating'
+  alias: 'Dad System - Overheating Alert'
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.cpu_temperature
+      above: 75
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad System Alert - Pi Overheating"
+        message: "CPU temperature is high"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">🌡️ Pi Overheating</h2>
+            <p>CPU temperature is at <strong>{{ states('sensor.cpu_temperature') }}°C</strong>.</p>
+            <p>Check ventilation around the Pi.</p>
+
+# -----------------------------------------------------
+# BED TIME DETECTION (Two-step approach for reliability)
+# Step 1: Record entry time immediately when bedroom becomes occupied
+# Step 2: After 10 mins, if still occupied, copy entry time to bed_time
+# This is resilient to Xiaomi cloud outages during the wait period
+# -----------------------------------------------------
+- id: 'dad_record_bedroom_entry'
+  alias: 'Dad - Record Bedroom Entry Time'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bedroom_occupied
+      to: 'on'
+  condition:
+    - condition: time
+      after: '22:00:00'
+      before: '06:00:00'
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.dad_bedroom_entry_time
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+- id: 'dad_detect_bed_time'
+  alias: 'Dad - Detect Bed Time'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bedroom_occupied
+      to: 'on'
+      for:
+        minutes: 10
+  condition:
+    - condition: time
+      after: '22:00:00'
+      before: '06:00:00'
+    # Only if we have a valid entry time from today/tonight
+    - condition: template
+      value_template: >
+        {% set entry = states('input_datetime.dad_bedroom_entry_time') %}
+        {{ entry not in ['unknown', 'unavailable', ''] and
+           (as_timestamp(entry) | default(0)) > (as_timestamp(now()) - 3600) }}
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.dad_bed_time
+      data:
+        time: "{{ state_attr('input_datetime.dad_bedroom_entry_time', 'timestamp') | timestamp_custom('%H:%M:%S', true) }}"
+
+# -----------------------------------------------------
+# WAKE TIME DETECTION
+# Dad wakes 6-7am, detect when he leaves bedroom
+# -----------------------------------------------------
+- id: 'dad_detect_wake_time'
+  alias: 'Dad - Detect Wake Time'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bedroom_occupied
+      from: 'on'
+      to: 'off'
+      for:
+        minutes: 10
+  condition:
+    - condition: time
+      after: '05:00:00'
+      before: '10:00:00'
+    - condition: template
+      value_template: "{{ states('input_datetime.dad_bed_time') != 'unknown' }}"
+  action:
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.dad_wake_time
+      data:
+        time: "{{ now().strftime('%H:%M:%S') }}"
+    # Update rolling average wake time
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.dad_avg_wake_time
+      data:
+        time: >
+          {% set current_wake = now().hour * 60 + now().minute %}
+          {% set avg_time = states('input_datetime.dad_avg_wake_time') %}
+          {% if avg_time == 'unknown' or avg_time == '' %}
+            {{ now().strftime('%H:%M:%S') }}
+          {% else %}
+            {% set avg_parts = avg_time.split(':') %}
+            {% set avg_mins = avg_parts[0]|int * 60 + avg_parts[1]|int %}
+            {% set new_avg = (avg_mins * 0.8 + current_wake * 0.2) | int %}
+            {{ '%02d:%02d:00' | format(new_avg // 60, new_avg % 60) }}
+          {% endif %}
+
+# -----------------------------------------------------
+# LATE WAKE ALERT
+# Alert if Dad hasn't woken up within 45 mins of average
+# -----------------------------------------------------
+- id: 'dad_late_wake_alert'
+  alias: 'Dad - Late Wake Alert'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: >
+        {% set avg_time = states('input_datetime.dad_avg_wake_time') %}
+        {% if avg_time != 'unknown' and avg_time != '' %}
+          {% set avg_parts = avg_time.split(':') %}
+          {% set avg_mins = avg_parts[0]|int * 60 + avg_parts[1]|int + 45 %}
+          {% set current_mins = now().hour * 60 + now().minute %}
+          {{ current_mins >= avg_mins and current_mins <= avg_mins + 60 }}
+        {% else %}
+          false
+        {% endif %}
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+    # Don't alert if Xiaomi cloud is offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'on'
+    - condition: time
+      after: '05:00:00'
+      before: '10:00:00'
+    - condition: state
+      entity_id: binary_sensor.bedroom_occupied
+      state: 'on'
+    - condition: template
+      value_template: >
+        {% set wake = states('input_datetime.dad_wake_time') %}
+        {% set bed = states('input_datetime.dad_bed_time') %}
+        {{ wake == 'unknown' or (bed != 'unknown' and
+           strptime(bed, '%H:%M:%S').hour > strptime(wake, '%H:%M:%S').hour) }}
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad - Late Wake Up"
+        message: "Dad hasn't woken up yet and it's past his usual time"
+        data:
+          html: >
+            <h2 style="color: #f0ad4e;">🛏️ Late Wake Up Alert</h2>
+            <p>Dad is still in the bedroom and it's <strong>45+ minutes past his usual wake time</strong>.</p>
+            <p><strong>Current time:</strong> {{ now().strftime('%I:%M %p') }}<br>
+            <strong>Average wake time:</strong> {{ states('input_datetime.dad_avg_wake_time') }}<br>
+            <strong>Bed time last night:</strong> {{ states('input_datetime.dad_bed_time') }}</p>
+            <p style="color: #d9534f;">Please check in if concerned.</p>
+
+# -----------------------------------------------------
+# MOTION SNAPSHOTS
+# -----------------------------------------------------
+- id: 'dad_motion_snapshot_living_room'
+  alias: 'Dad - Motion Snapshot Living Room'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.gramps_living_room_motion
+      to: 'on'
+  action:
+    - service: shell_command.snapshot_living_room
+    - delay: '00:00:30'
+
+- id: 'dad_motion_snapshot_conservatory'
+  alias: 'Dad - Motion Snapshot Conservatory'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.gramps_conservatory_motion
+      to: 'on'
+  action:
+    - service: shell_command.snapshot_conservatory
+    - delay: '00:00:30'
+
+# -----------------------------------------------------
+# XIAOMI CLOUD OFFLINE DETECTION
+# Detects when EITHER Xiaomi sensor stops updating (15 mins stale)
+# Uses our tracked update times instead of last_changed for accuracy
+# Sets cloud status boolean and sends ONE notification
+# Activity alerts are suppressed while cloud is offline
+# -----------------------------------------------------
+- id: 'dad_xiaomi_cloud_offline'
+  alias: 'Dad - Xiaomi Cloud Offline'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: >
+        {% set bedroom_last = states('input_datetime.bedroom_sensor_last_update') %}
+        {% set shower_last = states('input_datetime.shower_room_sensor_last_update') %}
+        {% set stale_threshold = 900 %}
+        {% if bedroom_last in ['unknown', 'unavailable', ''] or shower_last in ['unknown', 'unavailable', ''] %}
+          true
+        {% else %}
+          {% set bedroom_age = as_timestamp(now()) - (as_timestamp(bedroom_last) | default(0)) %}
+          {% set shower_age = as_timestamp(now()) - (as_timestamp(shower_last) | default(0)) %}
+          {{ bedroom_age > stale_threshold or shower_age > stale_threshold }}
+        {% endif %}
+      for:
+        minutes: 5
+  condition:
+    # Only alert if cloud was previously available (prevents spam)
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'on'
+  action:
+    # Mark cloud as unavailable (no email - too frequent)
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.xiaomi_cloud_available
+
+# -----------------------------------------------------
+# XIAOMI CLOUD BACK ONLINE
+# Detects when Xiaomi cloud starts updating again
+# Requires BOTH sensors to have updated recently (within 15 mins)
+# -----------------------------------------------------
+- id: 'dad_xiaomi_cloud_online'
+  alias: 'Dad - Xiaomi Cloud Online'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: sensor.xiaomi_03_85df_occupancy_sensor
+    - platform: state
+      entity_id: sensor.xiaomi_03_b987_occupancy_sensor
+  condition:
+    # Only if cloud was previously marked offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'off'
+    # Ignore unavailable/unknown states
+    - condition: template
+      value_template: "{{ trigger.to_state.state not in ['unavailable', 'unknown', ''] }}"
+    # Only mark online if BOTH sensors have updated recently
+    - condition: template
+      value_template: >
+        {% set bedroom_last = states('input_datetime.bedroom_sensor_last_update') %}
+        {% set shower_last = states('input_datetime.shower_room_sensor_last_update') %}
+        {% set fresh_threshold = 900 %}
+        {% if bedroom_last in ['unknown', 'unavailable', ''] or shower_last in ['unknown', 'unavailable', ''] %}
+          false
+        {% else %}
+          {% set bedroom_age = as_timestamp(now()) - (as_timestamp(bedroom_last) | default(0)) %}
+          {% set shower_age = as_timestamp(now()) - (as_timestamp(shower_last) | default(0)) %}
+          {{ bedroom_age < fresh_threshold and shower_age < fresh_threshold }}
+        {% endif %}
+  action:
+    # Mark cloud as available (no email - status shown on dashboard)
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.xiaomi_cloud_available
+
+# -----------------------------------------------------
+# XIAOMI QUICK RELOAD (Tier 1)
+# If sensors stale for 10 minutes, do a quick silent reload.
+# This catches transient Xiaomi cloud hiccups without notification.
+# Rate-limited to once per 30 minutes.
+# -----------------------------------------------------
+- id: 'dad_xiaomi_quick_reload'
+  alias: 'Dad - Xiaomi Quick Reload'
+  mode: single
+  trigger:
+    # Trigger directly on sensor staleness (10 mins = 600 secs)
+    # This fires BEFORE the cloud offline detection (15 mins)
+    - platform: template
+      value_template: >
+        {% set bedroom_last = states('input_datetime.bedroom_sensor_last_update') %}
+        {% set shower_last = states('input_datetime.shower_room_sensor_last_update') %}
+        {% set stale_threshold = 600 %}
+        {% if bedroom_last in ['unknown', 'unavailable', ''] or shower_last in ['unknown', 'unavailable', ''] %}
+          false
+        {% else %}
+          {% set bedroom_age = as_timestamp(now()) - (as_timestamp(bedroom_last) | default(0)) %}
+          {% set shower_age = as_timestamp(now()) - (as_timestamp(shower_last) | default(0)) %}
+          {{ bedroom_age > stale_threshold or shower_age > stale_threshold }}
+        {% endif %}
+  condition:
+    # Only if last quick reload was more than 10 minutes ago (v1.5.2)
+    - condition: template
+      value_template: >
+        {% set last_reload = states('input_datetime.xiaomi_last_quick_reload') %}
+        {% if last_reload in ['unknown', 'unavailable', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - (as_timestamp(last_reload) | default(0))) > 600 }}
+        {% endif %}
+  action:
+    # Record this reload attempt
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.xiaomi_last_quick_reload
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    # Reload the Xiaomi Miot integration (silent - no notification)
+    - service: homeassistant.reload_config_entry
+      data:
+        entry_id: 01KE34E9ADX17BKKWE8SHKQSBA
+
+# -----------------------------------------------------
+# XIAOMI AUTO-RESTART (Tier 2)
+# If sensors remain stale for 30 minutes despite quick reloads,
+# do another reload and send notification for visibility.
+# Rate-limited to once per 4 hours to avoid spam.
+# -----------------------------------------------------
+- id: 'dad_xiaomi_auto_restart'
+  alias: 'Dad - Xiaomi Auto-Restart'
+  mode: single
+  trigger:
+    # Check every hour if cloud is offline and needs restart
+    - platform: time_pattern
+      hours: "/1"
+  condition:
+    # Cloud must be offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'off'
+    # Must have been offline for at least 30 minutes
+    - condition: template
+      value_template: >
+        {% set bedroom_last = states('input_datetime.bedroom_sensor_last_update') %}
+        {% set shower_last = states('input_datetime.shower_room_sensor_last_update') %}
+        {% if bedroom_last in ['unknown', 'unavailable', ''] or shower_last in ['unknown', 'unavailable', ''] %}
+          false
+        {% else %}
+          {% set stale_threshold = 1800 %}
+          {% set bedroom_age = as_timestamp(now()) - (as_timestamp(bedroom_last) | default(0)) %}
+          {% set shower_age = as_timestamp(now()) - (as_timestamp(shower_last) | default(0)) %}
+          {{ bedroom_age > stale_threshold or shower_age > stale_threshold }}
+        {% endif %}
+    # Only if last restart attempt was more than 4 hours ago (prevents spam)
+    - condition: template
+      value_template: >
+        {% set last_restart = states('input_datetime.xiaomi_last_restart') %}
+        {% if last_restart in ['unknown', 'unavailable', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - (as_timestamp(last_restart) | default(0))) > 14400 }}
+        {% endif %}
+  action:
+    # Record this restart attempt
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.xiaomi_last_restart
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    # Reload the Xiaomi Miot integration
+    - service: homeassistant.reload_config_entry
+      data:
+        entry_id: 01KE34E9ADX17BKKWE8SHKQSBA
+    # Send notification
+    - service: notify.email_family
+      data:
+        title: "Dad System - Xiaomi Integration Restarted"
+        message: "Automatically restarted Xiaomi integration due to stale sensors"
+        data:
+          html: >
+            <h2 style="color: #5bc0de;">🔄 Xiaomi Integration Restarted</h2>
+            <p>The Xiaomi presence sensors were stale for <strong>30+ minutes</strong>.</p>
+            <p>The system has automatically restarted the Xiaomi Miot integration to attempt recovery.</p>
+            <p>If sensors don't recover within 15 minutes, you may need to:</p>
+            <ul>
+              <li>Check internet connectivity at Dad's house</li>
+              <li>Re-authenticate the Xiaomi account in Home Assistant</li>
+              <li>Check Xiaomi server status</li>
+            </ul>
+            <p><em>This auto-restart is rate-limited to once per 4 hours to prevent spam.</em></p>
+
+# -----------------------------------------------------
+# XIAOMI AUTHENTICATION FAILURE ALERT
+# Detects when cloud offline persists despite restart attempts
+# Likely indicates expired credentials needing manual 2FA
+# -----------------------------------------------------
+- id: 'dad_xiaomi_auth_failure_alert'
+  alias: 'Dad - Xiaomi Auth Failure Alert'
+  mode: single
+  trigger:
+    # Check every 30 minutes
+    - platform: time_pattern
+      minutes: "/30"
+  condition:
+    # Cloud must be offline
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'off'
+    # Must have been offline for at least 2 hours
+    - condition: template
+      value_template: >
+        {% set bedroom_last = states('input_datetime.bedroom_sensor_last_update') %}
+        {% set shower_last = states('input_datetime.shower_room_sensor_last_update') %}
+        {% if bedroom_last in ['unknown', 'unavailable', ''] or shower_last in ['unknown', 'unavailable', ''] %}
+          false
+        {% else %}
+          {% set stale_threshold = 7200 %}
+          {% set bedroom_age = as_timestamp(now()) - (as_timestamp(bedroom_last) | default(0)) %}
+          {% set shower_age = as_timestamp(now()) - (as_timestamp(shower_last) | default(0)) %}
+          {{ bedroom_age > stale_threshold and shower_age > stale_threshold }}
+        {% endif %}
+    # At least one restart attempt has been made (indicates restart isn't helping)
+    - condition: template
+      value_template: >
+        {% set last_restart = states('input_datetime.xiaomi_last_restart') %}
+        {{ last_restart not in ['unknown', 'unavailable', ''] and
+           (as_timestamp(now()) - (as_timestamp(last_restart) | default(0))) < 7200 }}
+  action:
+    - service: notify.email_family
+      data:
+        title: "🚨 Dad System - Xiaomi Auth Failure Suspected"
+        message: "Sensors offline 2+ hours despite restart attempts. Authentication likely expired."
+        data:
+          html: >
+            <h2 style="color: #d9534f;">🚨 Xiaomi Authentication Failure Suspected</h2>
+            <p><strong>Sensors have been offline for 2+ hours despite automatic restart attempts.</strong></p>
+            <p>This usually indicates <strong>expired Xiaomi credentials</strong> that require manual re-authentication.</p>
+
+            <h3>Immediate Action Required:</h3>
+            <ol>
+              <li>Go to Dad's Home Assistant</li>
+              <li>Settings → Devices & Services → Xiaomi Miot Auto</li>
+              <li>Click ⋮ (three dots) → Configure</li>
+              <li>Re-enter Xiaomi credentials</li>
+              <li>Complete 2FA verification (SMS or Mi Home app)</li>
+              <li>Click ⋮ → Reload</li>
+            </ol>
+
+            <p><strong>Common error messages:</strong></p>
+            <ul>
+              <li>SERVICETOKEN_EXPIRED</li>
+              <li>need_verify</li>
+              <li>Too many failures when login to Xiaomi</li>
+            </ul>
+
+            <p><em>This alert triggers when sensors remain offline 2+ hours after restart attempts, suggesting authentication issues rather than temporary network problems.</em></p>
+
+# -----------------------------------------------------
+# SD CARD HEALTH ALERT
+# Alert if SD card errors detected
+# -----------------------------------------------------
+- id: 'dad_sdcard_errors_alert'
+  alias: 'Dad System - SD Card Errors Alert'
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.sd_card_errors
+      above: 0
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad System URGENT - SD Card Errors"
+        message: "SD card errors detected"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">🚨 SD Card Errors Detected</h2>
+            <p><strong>{{ states('sensor.sd_card_errors') }}</strong> SD card errors have been detected.</p>
+            <p>This could indicate the SD card is failing. Consider:</p>
+            <ul>
+              <li>Creating a backup immediately</li>
+              <li>Replacing the SD card soon</li>
+              <li>Checking for filesystem corruption</li>
+            </ul>
+            <p style="color: #d9534f; font-weight: bold;">This is a critical hardware warning.</p>
+
+# -----------------------------------------------------
+# SHOWER ROOM EXTENDED PRESENCE ALERT
+# Alert if Dad is in the shower room for 30+ minutes
+# -----------------------------------------------------
+- id: 'dad_shower_extended_presence'
+  alias: 'Dad - Shower Room Extended Presence'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: "{{ 'has' in states('sensor.xiaomi_03_b987_occupancy_sensor') | lower }}"
+      for:
+        minutes: 30
+  condition:
+    - condition: state
+      entity_id: input_boolean.dad_monitoring_enabled
+      state: 'on'
+  action:
+    - service: notify.email_family
+      data:
+        title: 'Dad Alert - Extended Shower Room Presence'
+        message: 'Dad has been in the shower room for over 30 minutes'
+        data:
+          html: >
+            <h2 style="color: #f0ad4e;">🚿 Extended Shower Room Presence</h2>
+            <p>Dad has been in the <strong>shower room for over 30 minutes</strong>.</p>
+            <p>This could be normal (long shower), but please check if you are concerned.</p>
+            <p><strong>Current status:</strong> {{ states('sensor.xiaomi_03_b987_occupancy_sensor') }}</p>
+
+# -----------------------------------------------------
+# BATHROOM VISIT TRACKING
+# -----------------------------------------------------
+- id: 'dad_bathroom_visit_count'
+  alias: 'Dad - Count Bathroom Visit'
+  mode: single
+  trigger:
+    - platform: template
+      value_template: "{{ 'has' in states('sensor.xiaomi_03_b987_occupancy_sensor') | lower }}"
+  condition:
+    - condition: template
+      value_template: "{{ 'has' not in trigger.from_state.state | lower if trigger.from_state else true }}"
+  action:
+    - service: counter.increment
+      target:
+        entity_id: counter.dad_bathroom_visits
+    - delay:
+        minutes: 5
+
+- id: 'dad_bathroom_reset_daily'
+  alias: 'Dad - Reset Bathroom Counter Daily'
+  trigger:
+    - platform: time
+      at: '00:00:00'
+  action:
+    - service: counter.reset
+      target:
+        entity_id: counter.dad_bathroom_visits
+
+# DEEPGRAM LOW BALANCE ALERT
+- id: 'deepgram_low_balance'
+  alias: 'System - Deepgram Low Balance Alert'
+  description: 'Alert when Deepgram credit falls below threshold'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.deepgram_balance
+      below: 50
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.deepgram_balance') | float(999) > 0 }}"
+  action:
+    - service: notify.email_family
+      data:
+        title: "⚠️ Deepgram Balance Low"
+        message: "Deepgram STT credit balance is now ${{ states('sensor.deepgram_balance') }}. Consider topping up soon."
+  mode: single
+
+- id: 'deepgram_critical_balance'
+  alias: 'System - Deepgram Critical Balance Alert'
+  description: 'Urgent alert when Deepgram credit is nearly depleted'
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.deepgram_balance
+      below: 20
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.deepgram_balance') | float(999) > 0 }}"
+  action:
+    - service: notify.email_family
+      data:
+        title: "🚨 URGENT: Deepgram Balance Critical"
+        message: "Deepgram STT credit is nearly depleted! Balance: ${{ states('sensor.deepgram_balance') }}. Top up immediately to avoid service interruption."
+  mode: single
+
+# -----------------------------------------------------
+# XIAOMI CLOUD OFFLINE - EXTENDED (Daily Reminder)
+# Sends daily reminder at 8am if cloud is still offline
+# -----------------------------------------------------
+- id: 'dad_xiaomi_cloud_offline_reminder'
+  alias: 'Dad - Xiaomi Cloud Offline Daily Reminder'
+  mode: single
+  trigger:
+    - platform: time
+      at: '08:00:00'
+  condition:
+    - condition: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      state: 'off'
+  action:
+    - service: notify.email_family
+      data:
+        title: "URGENT - Dad Sensors Still Offline"
+        message: "Xiaomi presence sensors have been offline for over 24 hours"
+        data:
+          html: >
+            <h2 style="color: #d9534f;">🚨 Presence Sensors Still Offline</h2>
+            <p><strong>The Xiaomi presence sensors at Dad's house are still offline.</strong></p>
+            <p>This means:</p>
+            <ul>
+              <li>❌ No bedroom presence detection</li>
+              <li>❌ No sleep pattern tracking</li>
+              <li>❌ Activity alerts are suspended</li>
+            </ul>
+            <p><strong>Camera motion detection is still working</strong> (Living Room + Conservatory).</p>
+            <h3>To Fix:</h3>
+            <ol>
+              <li>Go to Dad's Home Assistant</li>
+              <li>Settings → Devices & Services → Xiaomi Miot Auto</li>
+              <li>Click Configure and re-enter Xiaomi credentials</li>
+              <li>Complete any verification steps (SMS/app)</li>
+            </ol>
+            <p style="color: #d9534f; font-weight: bold;">Please fix this today to restore monitoring.</p>
+
+# -----------------------------------------------------
+# XIAOMI CLOUD EXTENDED OUTAGE ALERT
+# Only sends after 4 hours offline (not frequent blips)
+# Uses last_triggered to prevent repeated alerts
+# -----------------------------------------------------
+- id: 'dad_xiaomi_cloud_extended_outage'
+  alias: 'Dad - Xiaomi Cloud Extended Outage Alert'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      to: 'off'
+      for:
+        hours: 4
+  action:
+    - service: notify.email_family
+      data:
+        title: "Dad Alert - Presence Sensors Offline 4+ Hours"
+        message: "Xiaomi presence sensors have been offline for over 4 hours"
+        data:
+          html: >
+            <h2 style="color: #f0ad4e;">⚠️ Presence Sensors Offline</h2>
+            <p>The Xiaomi presence sensors at Dad's house have been <strong>offline for over 4 hours</strong>.</p>
+            <p>This is longer than typical server blips. The Xiaomi account may need re-authentication.</p>
+            <p><strong>What's affected:</strong></p>
+            <ul>
+              <li>❌ Bedroom presence sensor</li>
+              <li>❌ Sleep pattern tracking</li>
+              <li>❌ Activity-based alerts (suppressed to avoid false alarms)</li>
+            </ul>
+            <p><strong>Still working:</strong></p>
+            <ul>
+              <li>✅ Living Room camera motion</li>
+              <li>✅ Conservatory camera motion</li>
+            </ul>
+            <h3>To Fix:</h3>
+            <p>Go to HA → Settings → Devices & Services → Xiaomi Miot Auto → Configure, and re-login.</p>
+            <p><em>You'll receive a daily reminder at 8am until this is fixed.</em></p>
+
+# -----------------------------------------------------
+# XIAOMI CLOUD RECOVERED
+# Only notify if the extended outage alert (4+ hours) was sent
+# Hysteresis: Requires sensors to be stable online for 5 mins
+# Rate limited: Only sends once per 24 hours to prevent spam
+# -----------------------------------------------------
+- id: 'dad_xiaomi_cloud_recovered'
+  alias: 'Dad - Xiaomi Cloud Recovered'
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_boolean.xiaomi_cloud_available
+      from: 'off'
+      to: 'on'
+      for:
+        minutes: 5
+  condition:
+    # Only send recovery email if the extended outage alert was triggered in last 24 hours
+    - condition: template
+      value_template: >
+        {% set last = state_attr('automation.dad_xiaomi_cloud_extended_outage_alert', 'last_triggered') %}
+        {{ last is not none and (now() - last).total_seconds() < 86400 }}
+    # Rate limit: Only send once per 24 hours
+    - condition: template
+      value_template: >
+        {% set last_notif = states('input_datetime.xiaomi_recovery_notification_sent') %}
+        {% if last_notif in ['unknown', 'unavailable', ''] %}
+          true
+        {% else %}
+          {{ (as_timestamp(now()) - (as_timestamp(last_notif) | default(0))) > 86400 }}
+        {% endif %}
+  action:
+    # Record this notification
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.xiaomi_recovery_notification_sent
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    # Send notification
+    - service: notify.email_family
+      data:
+        title: "Dad - Presence Sensors Back Online"
+        message: "Xiaomi presence sensors are working again after extended outage"
+        data:
+          html: >
+            <h2 style="color: #5cb85c;">✅ Presence Sensors Recovered</h2>
+            <p>The Xiaomi presence sensors at Dad's house are <strong>back online</strong> after an extended outage.</p>
+            <p>Full monitoring has resumed:</p>
+            <ul>
+              <li>✅ Bedroom presence sensor</li>
+              <li>✅ Sleep pattern tracking</li>
+              <li>✅ Activity-based alerts</li>
+            </ul>
+            <p>Current bedroom status: {{ states('sensor.xiaomi_03_85df_occupancy_sensor') }}</p>
+            <p><em>This recovery notification is rate-limited to once per 24 hours.</em></p>

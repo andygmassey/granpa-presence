@@ -1,0 +1,272 @@
+homeassistant:
+  name: Dad Presence
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Custom dashboard
+lovelace:
+  mode: storage
+  dashboards:
+    dad-status:
+      mode: yaml
+      title: Dad Status
+      icon: mdi:home-heart
+      show_in_sidebar: true
+      filename: dashboards/status.yaml
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+logger:
+  default: warning
+  logs:
+    custom_components.xiaomi_gateway3: warning
+    custom_components.xiaomi_miot: warning
+
+# InfluxDB for presence data tracking
+influxdb:
+  api_version: 2
+  host: localhost
+  port: 8086
+  ssl: false
+  token: !secret influxdb_token
+  organization: dad
+  bucket: homeassistant
+  tags:
+    source: dad_presence
+  tags_attributes:
+    - friendly_name
+  include:
+    entities:
+      - binary_sensor.bedroom_occupied
+      - sensor.xiaomi_03_85df_occupancy_sensor
+      - input_datetime.dad_last_activity
+      - sensor.xiaomi_03_b987_occupancy_sensor
+      - binary_sensor.gramps_living_room_motion
+      - binary_sensor.gramps_conservatory_motion
+      - counter.dad_bathroom_visits
+
+# Email notifications
+notify:
+  - name: email_family
+    platform: smtp
+    server: smtp.gmail.com
+    port: 587
+    encryption: starttls
+    username: !secret smtp_username
+    password: !secret smtp_password
+    sender: !secret smtp_sender
+    recipient:
+      - !secret email_recipient_1
+      - !secret email_recipient_2
+      - !secret email_recipient_3
+    sender_name: Dad Home Assistant
+
+# Input helpers for Dad monitoring
+input_datetime:
+  dad_last_activity:
+    name: Dad Last Activity
+    has_date: true
+    has_time: true
+  dad_bed_time:
+    name: Dad Bed Time
+    has_date: false
+    has_time: true
+  dad_wake_time:
+    name: Dad Wake Time
+    has_date: false
+    has_time: true
+  dad_avg_wake_time:
+    name: Dad Average Wake Time
+    has_date: false
+    has_time: true
+  dad_bedroom_entry_time:
+    name: Dad Bedroom Entry Time
+    has_date: true
+    has_time: true
+  bedroom_sensor_last_update:
+    name: Bedroom Sensor Last Update
+    has_date: true
+    has_time: true
+  shower_room_sensor_last_update:
+    name: Shower Room Sensor Last Update
+    has_date: true
+    has_time: true
+  xiaomi_last_restart:
+    name: Xiaomi Last Restart Attempt
+    has_date: true
+    has_time: true
+  xiaomi_last_quick_reload:
+    name: Xiaomi Last Quick Reload
+    has_date: true
+    has_time: true
+  xiaomi_recovery_notification_sent:
+    name: Xiaomi Recovery Notification Last Sent
+    has_date: true
+    has_time: true
+
+input_boolean:
+  dad_monitoring_enabled:
+    name: Dad Monitoring Enabled
+    icon: mdi:shield-home
+    initial: true
+  xiaomi_cloud_available:
+    name: Xiaomi Cloud Available
+    icon: mdi:cloud-check
+    initial: true
+
+input_number:
+  daytime_alert_hours:
+    name: Daytime No Activity Alert (hours)
+    min: 1
+    max: 12
+    step: 0.5
+    initial: 4
+    unit_of_measurement: hours
+  nighttime_alert_hours:
+    name: Nighttime No Activity Alert (hours)
+    min: 4
+    max: 16
+    step: 1
+    initial: 12
+    unit_of_measurement: hours
+
+# Template sensors using actual Xiaomi sensor
+# Using trigger-based sensors for reliable state tracking at startup (v1.6)
+template:
+  - trigger:
+      - platform: state
+        entity_id: sensor.xiaomi_03_b987_occupancy_sensor
+      - platform: homeassistant
+        event: start
+    binary_sensor:
+      - name: "Shower Room Occupied"
+        device_class: occupancy
+        state: >
+          {% set s = states('sensor.xiaomi_03_b987_occupancy_sensor') | lower %}
+          {{ s not in ['unknown', 'unavailable', ''] and ('has' in s or 'someone' in s or s in ['presence', 'on', 'true', '1']) }}
+  - trigger:
+      - platform: state
+        entity_id: sensor.xiaomi_03_85df_occupancy_sensor
+      - platform: homeassistant
+        event: start
+    binary_sensor:
+      - name: "Bedroom Occupied"
+        device_class: occupancy
+        state: >
+          {% set s = states('sensor.xiaomi_03_85df_occupancy_sensor') | lower %}
+          {{ s not in ['unknown', 'unavailable', ''] and ('has' in s or 'someone' in s or s in ['presence', 'on', 'true', '1']) }}
+  # Trigger-based sensors that use now() - update every minute
+  - trigger:
+      - platform: time_pattern
+        minutes: "/1"
+      - platform: state
+        entity_id:
+          - input_datetime.bedroom_sensor_last_update
+          - input_datetime.shower_room_sensor_last_update
+    sensor:
+      - name: "Bedroom Sensor Age"
+        state: >
+          {% set last = states('input_datetime.bedroom_sensor_last_update') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            Unknown
+          {% else %}
+            {% set last_ts = as_timestamp(last) | default(0) %}
+            {% set diff = as_timestamp(now()) - last_ts %}
+            {% if diff < 60 %}
+              Just now
+            {% elif diff < 3600 %}
+              {{ (diff / 60) | int }} min ago
+            {% elif diff < 86400 %}
+              {{ (diff / 3600) | int }} hr ago
+            {% else %}
+              {{ (diff / 86400) | int }} days ago
+            {% endif %}
+          {% endif %}
+        icon: mdi:clock-outline
+      - name: "Shower Room Sensor Age"
+        state: >
+          {% set last = states('input_datetime.shower_room_sensor_last_update') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            Unknown
+          {% else %}
+            {% set last_ts = as_timestamp(last) | default(0) %}
+            {% set diff = as_timestamp(now()) - last_ts %}
+            {% if diff < 60 %}
+              Just now
+            {% elif diff < 3600 %}
+              {{ (diff / 60) | int }} min ago
+            {% elif diff < 86400 %}
+              {{ (diff / 3600) | int }} hr ago
+            {% else %}
+              {{ (diff / 86400) | int }} days ago
+            {% endif %}
+          {% endif %}
+        icon: mdi:clock-outline
+      - name: "Bedroom Sensor Stale"
+        state: >
+          {% set last = states('input_datetime.bedroom_sensor_last_update') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            true
+          {% else %}
+            {% set last_ts = as_timestamp(last) | default(0) %}
+            {{ (as_timestamp(now()) - last_ts) > 900 }}
+          {% endif %}
+        icon: mdi:alert-circle
+      - name: "Shower Room Sensor Stale"
+        state: >
+          {% set last = states('input_datetime.shower_room_sensor_last_update') %}
+          {% if last in ['unknown', 'unavailable', ''] %}
+            true
+          {% else %}
+            {% set last_ts = as_timestamp(last) | default(0) %}
+            {{ (as_timestamp(now()) - last_ts) > 900 }}
+          {% endif %}
+        icon: mdi:alert-circle
+
+# System Health Sensors (new format for HA 2023.8+)
+command_line:
+  - sensor:
+      name: Disk Usage Percent
+      command: "df / | awk 'NR==2 {gsub(/%/,\"\"); print $5}'"
+      unit_of_measurement: '%'
+      scan_interval: 3600
+  - sensor:
+      name: System Uptime
+      command: "awk '{days=int($1/86400); hours=int(($1%86400)/3600); mins=int(($1%3600)/60); printf \"%dd %dh %dm\", days, hours, mins}' /proc/uptime"
+      scan_interval: 3600
+  - sensor:
+      name: CPU Temperature
+      command: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.1f\", $1/1000}' || echo 0"
+      unit_of_measurement: '°C'
+      scan_interval: 300
+  - sensor:
+      name: SD Card Errors
+      command: "dmesg 2>/dev/null | grep -ciE 'mmc.*error|i/o error|mmcblk.*fail' || echo 0"
+      unit_of_measurement: 'errors'
+      value_template: "{{ value | int(0) }}"
+      scan_interval: 3600
+  - sensor:
+      name: Deepgram Balance
+      command: !secret deepgram_balance_cmd
+      unit_of_measurement: 'USD'
+      scan_interval: 21600
+
+# Shell commands for camera snapshots
+shell_command:
+  snapshot_living_room: !secret snapshot_living_room_cmd
+  snapshot_conservatory: !secret snapshot_conservatory_cmd
+
+# Daily bathroom visit counters
+counter:
+  dad_bathroom_visits:
+    name: Dad Daily Bathroom Visits
+    initial: 0
+    step: 1
+    icon: mdi:toilet
